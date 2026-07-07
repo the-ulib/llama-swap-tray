@@ -1,0 +1,16 @@
+<!-- Windows Sandbox configuration for the integration test.
+     Requires Windows 10/11 Pro/Enterprise with the "Windows Sandbox" feature enabled.
+     Adjust HostFolder if your clone lives somewhere else, then double-click this file.
+     The sandbox is disposable: closing the window discards everything. -->
+<Configuration>
+  <MappedFolders>
+    <MappedFolder>
+      <HostFolder>C:\llama-swap-tray</HostFolder>
+      <SandboxFolder>C:\repo</SandboxFolder>
+      <ReadOnly>true</ReadOnly>
+    </MappedFolder>
+  </MappedFolders>
+  <LogonCommand>
+    <Command>cmd /k powershell -NoProfile -ExecutionPolicy Bypass -Command "robocopy C:\repo C:\llama-swap-tray /E /XD .git bin backup /XF config.yaml swap-tray.exe | Out-Null; Set-Location C:\llama-swap-tray; powershell -NoProfile -ExecutionPolicy Bypass -File tests\integration.ps1 -Force"</Command>
+  </LogonCommand>
+</Configuration>

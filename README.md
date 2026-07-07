@@ -117,6 +117,22 @@ pre-check (only update from a *working* state) → backup → download newest re
 verify (GPU detected, API up, real inference produced tokens — with an automatically
 selected model from your config) → automatic rollback + error description on failure.
 
+## Testing
+
+- **`tests\smoke.ps1`** — non-invasive, runs anywhere in seconds: all scripts parse,
+  the tray app compiles with the inbox C# compiler, the repo is complete, no
+  machine-specific paths slipped in.
+- **`tests\integration.ps1`** — a REAL end-to-end installation (cpu backend, ~1 MB
+  test model): downloads, task registration, no-UAC permissions, tray build, live
+  inference, stop/start, update version check. **Run it only on a disposable
+  system** — it refuses to run when it detects an existing installation.
+- **`tests\sandbox.wsb`** — the easiest disposable system: double-click to open a
+  [Windows Sandbox](https://learn.microsoft.com/windows/security/application-security/application-isolation/windows-sandbox/)
+  (Windows Pro/Enterprise feature) that copies the repo and runs the integration
+  test automatically. Closing the window discards everything. Note: the sandbox has
+  no GPU passthrough, which is exactly why the test forces the cpu backend — GPU
+  specifics still need one manual run on real hardware.
+
 ## Troubleshooting
 
 | Symptom | Cause / fix |

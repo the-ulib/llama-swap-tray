@@ -8,7 +8,9 @@ $ErrorActionPreference = "Stop"
 #   cuda   - NVIDIA GPUs (default)
 #   vulkan - AMD / Intel / NVIDIA via Vulkan
 #   cpu    - no GPU acceleration
-$Backend = "cuda"
+# Can also be overridden via the LLAMASWAP_BACKEND environment variable
+# (used by tests\integration.ps1, which forces cpu inside VMs).
+$Backend = if ($env:LLAMASWAP_BACKEND) { $env:LLAMASWAP_BACKEND } else { "cuda" }
 
 $Root = Split-Path $PSScriptRoot -Parent
 $dest = Join-Path $Root "bin\llama.cpp"

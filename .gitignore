@@ -9,3 +9,6 @@ swap-tray.exe
 
 # update backups (setup\05-update.ps1)
 backup/
+
+# test artifacts (tests\integration.ps1)
+tests/models/
