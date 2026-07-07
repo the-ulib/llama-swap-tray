@@ -1,0 +1,11 @@
+# your personal configuration (copy config.example.yaml -> config.yaml)
+config.yaml
+
+# runtime binaries, filled by setup\01 and 02
+bin/
+
+# tray app: build artifact compiled from setup\swap-tray.cs by setup\04
+swap-tray.exe
+
+# update backups (setup\05-update.ps1)
+backup/
