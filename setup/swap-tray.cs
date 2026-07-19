@@ -52,6 +52,7 @@ namespace SwapTray
             miStatus = new ToolStripMenuItem("Status: ...");
             miStatus.Enabled = false;
             var miDash = new ToolStripMenuItem("Open dashboard", null, delegate { OpenDashboard(); });
+            var miConfig = new ToolStripMenuItem("Edit config.yaml", null, delegate { OpenConfig(); });
             miUnload = new ToolStripMenuItem("Unload models (free VRAM)", null, OnUnload);
             miStop = new ToolStripMenuItem("STOP llama-swap (gaming mode)", null, OnStop);
             miStart = new ToolStripMenuItem("Start llama-swap", null, OnStart);
@@ -61,7 +62,7 @@ namespace SwapTray
             var menu = new ContextMenuStrip();
             menu.Items.AddRange(new ToolStripItem[] {
                 miStatus, new ToolStripSeparator(),
-                miDash, miUnload, miStop, miStart,
+                miDash, miConfig, miUnload, miStop, miStart,
                 new ToolStripSeparator(), miAuto,
                 new ToolStripSeparator(), miExit });
             menu.Opening += delegate { ApplyMenuState(); };
@@ -83,6 +84,20 @@ namespace SwapTray
         void OpenDashboard()
         {
             try { Process.Start(Api + "/ui"); } catch { }
+        }
+
+        void OpenConfig()
+        {
+            // config.yaml sits next to the exe (repo root)
+            string cfg = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "config.yaml");
+            if (!File.Exists(cfg))
+            {
+                Balloon("config.yaml not found: " + cfg);
+                return;
+            }
+            try { Process.Start(cfg); }                                   // default editor
+            catch { try { Process.Start("notepad.exe", "\"" + cfg + "\""); } catch { } }
+            Balloon("Changes apply automatically (watch-config).");
         }
 
         static Icon MakeIcon(Color c)

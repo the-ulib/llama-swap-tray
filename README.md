@@ -77,6 +77,8 @@ Right-click the λ icon:
 
 - **Status line** — which models are loaded right now (also shown as icon color + tooltip)
 - **Open dashboard** — llama-swap's web UI (also on double-click)
+- **Edit config.yaml** — opens your config in the default editor; llama-swap
+  hot-reloads it on save, so changes apply without a restart
 - **Unload models** — frees all VRAM instantly; models reload on the next request.
   Enough for a quick game.
 - **STOP llama-swap (gaming mode)** — unloads everything and ends the server task.
