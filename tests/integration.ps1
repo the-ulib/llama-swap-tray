@@ -81,6 +81,11 @@ try {
 } catch {}
 Assert "inference produced tokens" ($tokens -ge 1)
 
+foreach ($taskName in @("server", "tray")) {
+    $installedTask = Get-ScheduledTask -TaskPath "\llama-swap\" -TaskName $taskName
+    Assert "$taskName task has unlimited execution time" ($installedTask.Settings.ExecutionTimeLimit -eq "PT0S")
+}
+
 Assert "tray exe was built" (Test-Path (Join-Path $Root "swap-tray.exe"))
 Assert "tray process is running" ([bool](Get-Process -Name "swap-tray" -ErrorAction SilentlyContinue))
 

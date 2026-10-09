@@ -27,6 +27,11 @@ if ($needBuild) {
 
 # 2) register the logon task pointing at the exe (quoted for paths with spaces)
 schtasks /Create /TN $TaskName /TR "`"$Exe`"" /SC ONLOGON /F | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "Could not register task '$TaskName'" }
+# Keep the tray available after three days, including while in gaming mode.
+$traySettings = (Get-ScheduledTask -TaskPath "\llama-swap\" -TaskName "tray").Settings
+$traySettings.ExecutionTimeLimit = "PT0S"
+Set-ScheduledTask -TaskPath "\llama-swap\" -TaskName "tray" -Settings $traySettings -ErrorAction Stop | Out-Null
 Write-Host "Logon task '$TaskName' -> $Exe"
 
 # 3) stop old instances, start fresh

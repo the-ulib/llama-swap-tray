@@ -19,6 +19,11 @@ $Cmd = "`"$Exe`" -config `"$Config`" -watch-config -listen :$Port"
 
 # 1) create/overwrite the boot task (the Task Scheduler folder is created automatically)
 schtasks /Create /TN $TaskName /TR $Cmd /SC ONSTART /RU SYSTEM /RL HIGHEST /F | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "Could not register task '$TaskName'" }
+# Keep the server running: override Task Scheduler's default 72-hour limit.
+$serverSettings = (Get-ScheduledTask -TaskPath "\llama-swap\" -TaskName "server").Settings
+$serverSettings.ExecutionTimeLimit = "PT0S"
+Set-ScheduledTask -TaskPath "\llama-swap\" -TaskName "server" -Settings $serverSettings -ErrorAction Stop | Out-Null
 Write-Host "Task '$TaskName' registered: $Cmd"
 
 # 2) firewall rule so other machines on the LAN can reach the API

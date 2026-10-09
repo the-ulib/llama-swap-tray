@@ -13,7 +13,7 @@ function Check([string]$name, [scriptblock]$test) {
 Check "expected files present" {
     foreach ($f in @("install.cmd", "update.cmd", "config.example.yaml", "LICENSE", "README.md",
                      "setup\01-llama-cpp.ps1", "setup\02-llama-swap.ps1", "setup\03-server-task.ps1",
-                     "setup\04-tray-task.ps1", "setup\05-update.ps1", "setup\swap-tray.cs")) {
+                     "setup\04-tray-task.ps1", "setup\05-update.ps1", "setup\06-fix-task-limits.ps1", "setup\swap-tray.cs")) {
         if (-not (Test-Path (Join-Path $Root $f))) { throw "$f missing" }
     }
 }

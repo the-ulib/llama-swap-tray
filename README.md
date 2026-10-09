@@ -57,6 +57,12 @@ two scheduled tasks and a config file.
 To change the port: edit `$Port` in `setup\03-server-task.ps1` **and** the `Api`
 constant in `setup\swap-tray.cs`, then re-run `install.cmd`.
 
+For existing installations, run `setup\06-fix-task-limits.ps1` as administrator
+from PowerShell. It backs up both task definitions and removes Windows Task
+Scheduler's default 72-hour execution limit without starting or stopping either
+task. This is safe while the server is in gaming mode. New installations set
+unlimited execution time for both the server and tray tasks automatically.
+
 ## What gets installed where
 
 | What | Where |
