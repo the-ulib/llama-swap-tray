@@ -4,9 +4,11 @@
 # NOTE: deliberately NOT a shortcut in shell:startup and NOT a hidden PowerShell -
 # both patterns are regularly flagged by antivirus heuristics.
 #Requires -RunAsAdministrator
+param([string]$TaskFolder = 'llama-swap')
 $ErrorActionPreference = "Stop"
 
-$TaskName = "llama-swap\tray"
+$TaskName = $TaskFolder.Trim('\') + '\tray'
+$TaskPath = '\' + $TaskFolder.Trim('\') + '\'
 $Root = Split-Path $PSScriptRoot -Parent
 $Src = Join-Path $PSScriptRoot "swap-tray.cs"
 $Exe = Join-Path $Root "swap-tray.exe"
@@ -16,7 +18,7 @@ $csc = Join-Path $env:windir "Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 $needBuild = (-not (Test-Path $Exe)) -or ((Get-Item $Src).LastWriteTime -gt (Get-Item $Exe).LastWriteTime)
 if ($needBuild) {
     # stop running instances so the exe can be replaced
-    Get-Process -Name "swap-tray" -ErrorAction SilentlyContinue | Stop-Process -Force
+    Get-Process -Name "swap-tray" -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $Exe } | Stop-Process -Force
     Start-Sleep -Seconds 1
     & $csc /nologo /target:winexe /out:$Exe /reference:System.Drawing.dll /reference:System.Windows.Forms.dll /reference:System.Web.Extensions.dll $Src
     if ($LASTEXITCODE -ne 0) { throw "Compilation of swap-tray.cs failed" }
@@ -29,13 +31,13 @@ if ($needBuild) {
 schtasks /Create /TN $TaskName /TR "`"$Exe`"" /SC ONLOGON /F | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "Could not register task '$TaskName'" }
 # Keep the tray available after three days, including while in gaming mode.
-$traySettings = (Get-ScheduledTask -TaskPath "\llama-swap\" -TaskName "tray").Settings
+$traySettings = (Get-ScheduledTask -TaskPath $TaskPath -TaskName "tray").Settings
 $traySettings.ExecutionTimeLimit = "PT0S"
-Set-ScheduledTask -TaskPath "\llama-swap\" -TaskName "tray" -Settings $traySettings -ErrorAction Stop | Out-Null
+Set-ScheduledTask -TaskPath $TaskPath -TaskName "tray" -Settings $traySettings -ErrorAction Stop | Out-Null
 Write-Host "Logon task '$TaskName' -> $Exe"
 
 # 3) stop old instances, start fresh
-Get-Process -Name "swap-tray" -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process -Name "swap-tray" -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $Exe } | Stop-Process -Force
 Start-Sleep -Seconds 1
 schtasks /Run /TN $TaskName | Out-Null
 Write-Host "Tray started - the icon appears in the taskbar (possibly behind the ^ overflow arrow)."

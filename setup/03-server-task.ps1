@@ -2,10 +2,11 @@
 # RUN AS ADMINISTRATOR. Idempotent - safe to re-run any time
 # (e.g. to change the port or to repair task permissions).
 #Requires -RunAsAdministrator
+param([int]$Port = 9292, [string]$TaskFolder = 'llama-swap')
 $ErrorActionPreference = "Stop"
 
-$TaskName = "llama-swap\server"   # lives in its own Task Scheduler folder
-$Port = 9292                      # must match the Api constant in setup\swap-tray.cs
+$TaskName = $TaskFolder.Trim('\') + '\server'
+$TaskPath = '\' + $TaskFolder.Trim('\') + '\'
 
 $Root = Split-Path $PSScriptRoot -Parent
 $Exe = Join-Path $Root "bin\llama-swap\llama-swap.exe"
@@ -16,14 +17,22 @@ if (-not (Test-Path $Config)) { throw "config.yaml not found - copy config.examp
 
 # quotes around paths so installs in folders with spaces work
 $Cmd = "`"$Exe`" -config `"$Config`" -watch-config -listen :$Port"
+if (Test-Path -LiteralPath (Join-Path $Root 'runtime\coordination-installed.json')) {
+    $coord = Get-Content -LiteralPath (Join-Path $Root 'coordinator.json') -Raw | ConvertFrom-Json
+    $command = Get-Content -LiteralPath (Join-Path $Root 'runtime\coordination-command.json') -Raw | ConvertFrom-Json
+    $Cmd = '"{0}" {1}' -f $command.execute, $command.arguments
+    $Port = $coord.listen_port
+    $TaskName = $coord.server_task_name
+    $TaskPath = '\' + ($TaskName -replace '\\server$', '') + '\'
+}
 
 # 1) create/overwrite the boot task (the Task Scheduler folder is created automatically)
 schtasks /Create /TN $TaskName /TR $Cmd /SC ONSTART /RU SYSTEM /RL HIGHEST /F | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "Could not register task '$TaskName'" }
 # Keep the server running: override Task Scheduler's default 72-hour limit.
-$serverSettings = (Get-ScheduledTask -TaskPath "\llama-swap\" -TaskName "server").Settings
+$serverSettings = (Get-ScheduledTask -TaskPath $TaskPath -TaskName "server").Settings
 $serverSettings.ExecutionTimeLimit = "PT0S"
-Set-ScheduledTask -TaskPath "\llama-swap\" -TaskName "server" -Settings $serverSettings -ErrorAction Stop | Out-Null
+Set-ScheduledTask -TaskPath $TaskPath -TaskName "server" -Settings $serverSettings -ErrorAction Stop | Out-Null
 Write-Host "Task '$TaskName' registered: $Cmd"
 
 # 2) firewall rule so other machines on the LAN can reach the API
@@ -38,7 +47,7 @@ if (-not (Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContin
 #    and avoids the trap where a standard user elevates with a different admin account.
 $svc = New-Object -ComObject Schedule.Service
 $svc.Connect()
-$task = $svc.GetFolder("\llama-swap").GetTask("server")
+$task = $svc.GetFolder($TaskPath.TrimEnd('\')).GetTask("server")
 # request only owner/group/DACL (7) so an appended ACE lands inside the DACL section
 $sd = $task.GetSecurityDescriptor(7)
 # IMPORTANT: check for the full ACE, not just a SID - the creator's SID always

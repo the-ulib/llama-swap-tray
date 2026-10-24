@@ -12,3 +12,10 @@ backup/
 
 # test artifacts (tests\integration.ps1)
 tests/models/
+tests/comfy-fixture/
+
+# Optional ComfyUI coordination: generated settings, secrets and dependencies
+coordinator.json
+.coord-env/
+runtime/
+__pycache__/

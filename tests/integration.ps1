@@ -7,7 +7,7 @@
 # tray build, live inference, stop/start, and the update script's version check.
 #
 #   powershell -ExecutionPolicy Bypass -File tests\integration.ps1 [-Force]
-param([switch]$Force)
+param([switch]$Force, [switch]$WithCoordination)
 $ErrorActionPreference = "Stop"
 $Root = Split-Path $PSScriptRoot -Parent
 $Api = "http://localhost:9292"
@@ -107,6 +107,36 @@ Assert "server restarts via task" $upAgain
 # update script: freshly installed means the version check should short-circuit
 $updOut = & (Join-Path $Root "setup\05-update.ps1") 2>&1 | Out-String
 Assert "update script reports 'already up to date'" ($updOut -match "Already up to date")
+
+if ($WithCoordination) {
+    # Still disposable-only: this exercises the real optional installer/task,
+    # persistent toggle, CPU inference and rollback using a fake ComfyUI API.
+    Invoke-RestMethod "$Api/unload" | Out-Null
+    $comfyFixture = Join-Path $PSScriptRoot 'comfy-fixture'
+    New-Item -ItemType Directory -Path $comfyFixture -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'fake_comfy.py') -Destination (Join-Path $comfyFixture 'main.py') -Force
+    & (Join-Path $Root 'setup\07-coordination.ps1') -ComfyRoot $comfyFixture -LlmModels test-model
+    $python = Join-Path $Root '.coord-env\Scripts\python.exe'
+    $fakeProcess = Start-Process -FilePath $python -ArgumentList ('"{0}" "{1}"' -f (Join-Path $comfyFixture 'main.py'), (Join-Path $Root 'coordinator.json')) -WindowStyle Hidden -PassThru
+    try {
+        Start-Sleep -Seconds 3
+        $coord = Invoke-RestMethod "$Api/coordination/status" -TimeoutSec 10
+        Assert 'optional install defaults to off' (-not $coord.enabled)
+        Invoke-RestMethod "$Api/coordination/settings" -Method Post -ContentType application/json -Body '{"enabled":true}' | Out-Null
+        $r = Invoke-RestMethod "$Api/v1/completions" -Method Post -ContentType application/json -Body '{"model":"test-model","prompt":"Hello","max_tokens":8}' -TimeoutSec 120
+        Assert 'coordinated real CPU inference produces tokens' ($r.usage.completion_tokens -ge 1)
+        Start-Sleep -Seconds 1
+        Assert 'coordinated request unloads the model' (-not (Invoke-RestMethod "$Api/running").running.Count)
+        & (Join-Path $Root 'tests\coordination.ps1') -Python $python -LlamaSwapExe (Join-Path $Root 'bin\llama-swap\llama-swap.exe')
+        & (Join-Path $Root 'setup\08-rollback-coordination.ps1')
+        Start-Sleep -Seconds 3
+        Assert 'rollback restores ordinary model API' ((Invoke-RestMethod "$Api/v1/models").data.id -contains 'test-model')
+        Assert 'rollback removes coordination marker' (-not (Test-Path (Join-Path $Root 'runtime\coordination-installed.json')))
+    } finally {
+        # The venv launcher is a stub: terminate only this fixture's known tree.
+        & $python -c 'import psutil,sys; p=psutil.Process(int(sys.argv[1])); children=p.children(recursive=True); [c.terminate() for c in children]; p.terminate(); psutil.wait_procs(children+[p],timeout=10)' $fakeProcess.Id
+    }
+}
 
 Write-Host ""
 if ($script:fail -eq 0) { Write-Host "INTEGRATION TEST PASSED" -ForegroundColor Green }

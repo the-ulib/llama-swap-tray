@@ -13,7 +13,9 @@ function Check([string]$name, [scriptblock]$test) {
 Check "expected files present" {
     foreach ($f in @("install.cmd", "update.cmd", "config.example.yaml", "LICENSE", "README.md",
                      "setup\01-llama-cpp.ps1", "setup\02-llama-swap.ps1", "setup\03-server-task.ps1",
-                     "setup\04-tray-task.ps1", "setup\05-update.ps1", "setup\06-fix-task-limits.ps1", "setup\swap-tray.cs")) {
+                     "setup\04-tray-task.ps1", "setup\05-update.ps1", "setup\06-fix-task-limits.ps1", "setup\swap-tray.cs",
+                     "coordination.example.json", "coordination\server.py", "coordination\prepare.py",
+                     "setup\07-coordination.ps1", "setup\08-rollback-coordination.ps1")) {
         if (-not (Test-Path (Join-Path $Root $f))) { throw "$f missing" }
     }
 }
@@ -55,9 +57,16 @@ Check "config.example.yaml: model auto-detection finds an LLM entry" {
 
 Check "no leftover machine-specific paths in tracked files" {
     $hits = Get-ChildItem $Root -Recurse -File -Exclude *.exe |
-        Where-Object { $_.FullName -notmatch '\\(bin|backup|\.git|tests\\models)\\' } |
+        Where-Object { $_.FullName -notmatch '\\(bin|backup|\.git|runtime|\.coord-env|__pycache__|tests\\models)\\' } |
         Select-String -Pattern 'C:\\Users\\[a-z]' -AllMatches
     if ($hits) { throw "found user-specific path in: $($hits[0].Path)" }
+}
+
+Check "optional coordination example defaults off and has no fixed deployment" {
+    $coord = Get-Content (Join-Path $Root 'coordination.example.json') -Raw | ConvertFrom-Json
+    if ($coord.enabled) { throw 'Optional coordination must default off' }
+    if ($coord.backend_command.Count -or $coord.llm_models.Count -or $coord.blocked_models.Count) { throw 'Machine-specific commands/model IDs must be generated at install time' }
+    if ($coord.allow_persistent_unload) { throw 'Persistent-model eviction needs explicit opt-in' }
 }
 
 Write-Host ""

@@ -39,6 +39,8 @@ models:
     ttl: 0                  # never auto-unload
 
   # ---- example: another GPU app managed by llama-swap (here: ComfyUI) -------
+  # Optional queue-preserving coordination is documented in coordination/README.md.
+  # Opt-in installation can migrate this entry out of process swapping explicitly.
   # Any app can join the swap group: llama-swap starts it on demand, stops it
   # when an LLM needs the VRAM, and proxies it at /upstream/<name>/.
   #comfyui:

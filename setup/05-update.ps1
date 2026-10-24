@@ -17,6 +17,13 @@ $SwapExe    = Join-Path $Root "bin\llama-swap\llama-swap.exe"
 $BackupRoot = Join-Path $Root "backup"
 $Stamp      = Get-Date -Format "yyyy-MM-dd_HHmmss"
 $Backup     = Join-Path $BackupRoot $Stamp
+$coordinationMarker = Join-Path $Root 'runtime\coordination-installed.json'
+if (Test-Path -LiteralPath $coordinationMarker) {
+    $coord = Get-Content -LiteralPath (Join-Path $Root 'coordinator.json') -Raw | ConvertFrom-Json
+    $TaskName = $coord.server_task_name
+    $Port = $coord.listen_port
+    $Api = "http://localhost:$Port"
+}
 
 function Get-StackVersions {
     # stderr redirection via cmd, not via PowerShell: llama-server prints its version
@@ -35,6 +42,10 @@ function Stop-Server {
 }
 
 function Get-TestModel {
+    if (Test-Path -LiteralPath $coordinationMarker) {
+        $coord = Get-Content -LiteralPath (Join-Path $Root 'coordinator.json') -Raw | ConvertFrom-Json
+        return ($coord.llm_models | Select-Object -First 1)
+    }
     # generic: first model in config.yaml whose cmd uses llama-server
     # (works on any machine regardless of model names; entries for other
     #  GPU apps managed by llama-swap are skipped automatically)

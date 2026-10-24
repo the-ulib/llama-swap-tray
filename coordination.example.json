@@ -1,0 +1,20 @@
+{
+  "enabled": false,
+  "listen_host": "0.0.0.0",
+  "listen_port": 9292,
+  "backend_url": "http://127.0.0.1:9293",
+  "backend_command": [],
+  "comfy_url": "http://127.0.0.1:8188",
+  "comfy_process_path": "REPLACE-ME",
+  "comfy_start_command": [],
+  "server_task_name": "llama-swap\\server",
+  "max_wait_seconds": 1800,
+  "worker_timeout_seconds": 15,
+  "max_comfy_allocated_mib": 512,
+  "minimum_free_vram_mib": 2048,
+  "model_minimum_free_vram_mib": {},
+  "llm_models": [],
+  "blocked_models": [],
+  "allow_persistent_unload": false,
+  "control_token_file": "runtime/coordination-token.txt"
+}

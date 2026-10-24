@@ -32,6 +32,12 @@ This repo packages that idea into a complete, reproducible Windows deployment:
 Everything lives in this one folder. No installer, no services, no registry magic —
 two scheduled tasks and a config file.
 
+**Optional ComfyUI coordination:** preserve an independently launched ComfyUI's
+job queue and insert LLM calls between complete workflows. Install it separately
+with `setup\07-coordination.ps1`, then use the tray's persistent on/off checkbox.
+It defaults off and adds its own isolated Python runtime only when installed.
+See [setup, persistent-model policy and rollback](coordination/README.md).
+
 ## Requirements
 
 - Windows 10/11, 64-bit (uses the preinstalled .NET Framework C# compiler — no dev tools needed)
@@ -94,6 +100,10 @@ Right-click the λ icon:
   keeps auto-starting so re-enabling stays one click away.
 
 ## Managing other GPU apps (ComfyUI etc.)
+
+For ComfyUI jobs that must survive LLM calls, use the optional
+[queue coordination integration](coordination/README.md). The process-swapping
+method below is the original mode and stops the application when swapping.
 
 Any app can be a llama-swap "model": add an entry with `cmd:`, a health
 `checkEndpoint:` and put it in the same swap group as your big LLMs (see the

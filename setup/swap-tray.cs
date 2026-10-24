@@ -35,16 +35,34 @@ namespace SwapTray
         // must match the port configured in setup\03-server-task.ps1
         const string Api = "http://localhost:9292";
         const string TaskName = "llama-swap\\server";
+        static string apiOverride, taskOverride;
+        static string ApiUrl { get { return apiOverride ?? Api; } }
+        static string ActiveTaskName { get { return taskOverride ?? TaskName; } }
 
         NotifyIcon icon;
         Icon icoIdle, icoLoaded, icoOff;
-        ToolStripMenuItem miStatus, miUnload, miStop, miStart, miAuto;
+        ToolStripMenuItem miStatus, miUnload, miStop, miStart, miAuto, miCoord;
+        bool coordinationInstalled, coordinationAvailable, coordinationEnabled, configurationError;
+        string coordinationPhase = "";
         System.Windows.Forms.Timer timer;
         bool up;
         List<string> models = new List<string>();
 
         public TrayContext()
         {
+            string marker = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "runtime", "coordination-installed.json");
+            string settings = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "coordinator.json");
+            if (File.Exists(marker) && File.Exists(settings))
+            {
+                try
+                {
+                    var cfg = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(File.ReadAllText(settings));
+                    apiOverride = "http://localhost:" + Convert.ToInt32(cfg["listen_port"]);
+                    taskOverride = Convert.ToString(cfg["server_task_name"]);
+                    coordinationInstalled = true;
+                }
+                catch { configurationError = true; }
+            }
             icoIdle   = MakeIcon(Color.FromArgb(46, 160, 67));    // green: running, VRAM free
             icoLoaded = MakeIcon(Color.FromArgb(31, 111, 235));   // blue: models loaded
             icoOff    = MakeIcon(Color.FromArgb(110, 118, 129));  // gray: stopped
@@ -57,12 +75,13 @@ namespace SwapTray
             miStop = new ToolStripMenuItem("STOP llama-swap (gaming mode)", null, OnStop);
             miStart = new ToolStripMenuItem("Start llama-swap", null, OnStart);
             miAuto = new ToolStripMenuItem("Autostart...", null, OnToggleAutostart);
+            miCoord = new ToolStripMenuItem("Coordinate with ComfyUI", null, OnToggleCoordination);
             var miExit = new ToolStripMenuItem("Quit tray", null, delegate { icon.Visible = false; ExitThread(); });
 
             var menu = new ContextMenuStrip();
             menu.Items.AddRange(new ToolStripItem[] {
                 miStatus, new ToolStripSeparator(),
-                miDash, miConfig, miUnload, miStop, miStart,
+                miDash, miConfig, miUnload, miStop, miStart, miCoord,
                 new ToolStripSeparator(), miAuto,
                 new ToolStripSeparator(), miExit });
             menu.Opening += delegate { ApplyMenuState(); };
@@ -83,7 +102,7 @@ namespace SwapTray
 
         void OpenDashboard()
         {
-            try { Process.Start(Api + "/ui"); } catch { }
+            try { Process.Start(ApiUrl + "/ui"); } catch { }
         }
 
         void OpenConfig()
@@ -130,9 +149,22 @@ namespace SwapTray
 
         void RefreshState()
         {
+            coordinationAvailable = false;
+            if (coordinationInstalled)
+            {
+                try
+                {
+                    var state = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(HttpGet(ApiUrl + "/coordination/status", 1500));
+                    coordinationEnabled = Convert.ToBoolean(state["enabled"]);
+                    coordinationPhase = Convert.ToString(state["phase"]);
+                    if (state["error"] != null) coordinationPhase = Convert.ToString(state["error"]);
+                    coordinationAvailable = true;
+                }
+                catch { }
+            }
             try
             {
-                var json = HttpGet(Api + "/running", 1500);
+                var json = HttpGet(ApiUrl + "/running", 1500);
                 var root = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(json);
                 var list = new List<string>();
                 var arr = root.ContainsKey("running") ? root["running"] as ArrayList : null;
@@ -154,6 +186,8 @@ namespace SwapTray
             if (!up) { icon.Icon = icoOff; SetText("llama-swap: stopped"); }
             else if (models.Count > 0) { icon.Icon = icoLoaded; SetText("llama-swap: " + string.Join(", ", models.ToArray())); }
             else { icon.Icon = icoIdle; SetText("llama-swap: ready (VRAM free)"); }
+            if (coordinationAvailable && coordinationEnabled) SetText("llama-swap: " + coordinationPhase);
+            if (coordinationAvailable && coordinationPhase == "ComfyUI running") icon.Icon = icoLoaded;
         }
 
         void SetText(string t)
@@ -181,6 +215,49 @@ namespace SwapTray
             miAuto.Text = IsAutostartEnabled()
                 ? "Disable autostart (persistent)"
                 : "Re-enable autostart (currently OFF)";
+            miCoord.Text = coordinationInstalled ? "Coordinate with ComfyUI" : "ComfyUI coordination (not installed)";
+            miCoord.Enabled = up && coordinationAvailable;
+            miCoord.Checked = coordinationAvailable && coordinationEnabled;
+            if (coordinationInstalled)
+            {
+                miStop.Text = "Stop LLM service (ComfyUI stays running)";
+                miUnload.Text = "Unload LLM models";
+                if (models.Count == 0 && up) miStatus.Text = "running: no LLMs loaded";
+            }
+            if (coordinationAvailable && coordinationEnabled) miStatus.Text = coordinationPhase;
+            if (configurationError)
+            {
+                miStatus.Text = "Invalid coordinator.json; correct it and restart the tray";
+                miStop.Enabled = miStart.Enabled = miUnload.Enabled = miAuto.Enabled = miCoord.Enabled = false;
+            }
+        }
+
+        void OnToggleCoordination(object s, EventArgs e)
+        {
+            bool enable = !coordinationEnabled;
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                try
+                {
+                    var req = (HttpWebRequest)WebRequest.Create(ApiUrl + "/coordination/settings");
+                    req.Method = "POST";
+                    req.ContentType = "application/json";
+                    req.Timeout = 5000;
+                    byte[] body = System.Text.Encoding.UTF8.GetBytes("{\"enabled\":" + (enable ? "true" : "false") + "}");
+                    req.ContentLength = body.Length;
+                    using (var stream = req.GetRequestStream()) stream.Write(body, 0, body.Length);
+                    using (var response = req.GetResponse()) { }
+                    Balloon(enable ? "ComfyUI coordination enabled." : "Coordination disabled after any active handover finishes.");
+                }
+                catch (WebException ex)
+                {
+                    string message = ex.Message;
+                    if (ex.Response != null)
+                        using (var reader = new StreamReader(ex.Response.GetResponseStream())) message = reader.ReadToEnd();
+                    Balloon(message);
+                }
+                catch (Exception ex) { Balloon(ex.Message); }
+            });
         }
 
         void Balloon(string msg)
@@ -218,14 +295,14 @@ namespace SwapTray
 
         static bool RunTask(string verb)
         {
-            return RunSchtasks(verb + " /TN " + TaskName);
+            return RunSchtasks(verb + " /TN \"" + ActiveTaskName + "\"");
         }
 
         static bool IsAutostartEnabled()
         {
             try
             {
-                var psi = new ProcessStartInfo("schtasks", "/Query /TN " + TaskName + " /XML");
+                var psi = new ProcessStartInfo("schtasks", "/Query /TN \"" + ActiveTaskName + "\" /XML");
                 psi.UseShellExecute = false;
                 psi.CreateNoWindow = true;
                 psi.RedirectStandardOutput = true;
@@ -242,7 +319,7 @@ namespace SwapTray
         void OnToggleAutostart(object s, EventArgs e)
         {
             bool enabled = IsAutostartEnabled();
-            string args = "/Change /TN " + TaskName + (enabled ? " /DISABLE" : " /ENABLE");
+            string args = "/Change /TN \"" + ActiveTaskName + "\"" + (enabled ? " /DISABLE" : " /ENABLE");
             string msg = enabled
                 ? "Autostart disabled - llama-swap stays off even after a reboot."
                 : "Autostart enabled - llama-swap starts automatically at boot again.";
@@ -258,7 +335,7 @@ namespace SwapTray
             Balloon("Unloading models...");
             ThreadPool.QueueUserWorkItem(delegate
             {
-                try { HttpGet(Api + "/unload", 120000); } catch { }
+                try { HttpGet(ApiUrl + "/unload", 120000); } catch { }
             });
         }
 
@@ -267,7 +344,7 @@ namespace SwapTray
             Balloon("Unloading models and stopping...");
             // unload synchronously first: it usually takes <5 s and lets llama-swap
             // stop managed process trees cleanly (via their cmdStop commands)
-            try { HttpGet(Api + "/unload", 30000); } catch { }
+            try { HttpGet(ApiUrl + "/unload", 30000); } catch { }
             RunTask("/End");
             RefreshState();
         }
