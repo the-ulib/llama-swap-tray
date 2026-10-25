@@ -87,6 +87,11 @@ The `server` task gets an ACL entry so **local users can start/stop it without U
 
 Right-click the λ icon:
 
+The menu opens using cached status. Service and Task Scheduler checks run in the
+background every five seconds and when opening the menu, so slow or unavailable
+services do not block clicks. Startup controls show a checking state until the
+first refresh finishes.
+
 - **Status line** — which models are loaded right now (also shown as icon color + tooltip)
 - **Open dashboard** — llama-swap's web UI (also on double-click)
 - **Edit config.yaml** — opens your config in the default editor; llama-swap

@@ -43,6 +43,19 @@ namespace SwapTray
         Icon icoIdle, icoLoaded, icoOff;
         ToolStripMenuItem miStatus, miUnload, miStop, miStart, miAuto, miCoord, miComfyStop;
         ContextMenuStrip menu;
+        Control dispatcher;
+        int refreshPending;
+        volatile bool closing;
+        bool statusKnown;
+        bool? autostartEnabled;
+
+        sealed class TrayState
+        {
+            public bool up, comfyCanStop, coordinationAvailable, coordinationEnabled;
+            public bool? autostartEnabled;
+            public string coordinationPhase = "";
+            public List<string> models = new List<string>();
+        }
         string comfyUrl, comfyTokenPath;
         bool comfyCanStop;
         string[] comfyStopCommand = new string[0];
@@ -67,6 +80,8 @@ namespace SwapTray
                 }
                 catch { configurationError = true; }
             }
+            dispatcher = new Control();
+            dispatcher.CreateControl();
             LoadComfyControl();
             icoIdle   = MakeIcon(Color.FromArgb(46, 160, 67));    // green: running, VRAM free
             icoLoaded = MakeIcon(Color.FromArgb(31, 111, 235));   // blue: models loaded
@@ -83,7 +98,7 @@ namespace SwapTray
             miCoord = new ToolStripMenuItem("Coordinate with ComfyUI", null, OnToggleCoordination);
             miComfyStop = new ToolStripMenuItem("Stop ComfyUI", null, OnStopComfy);
             miComfyStop.Visible = comfyUrl != null;
-            var miExit = new ToolStripMenuItem("Quit tray", null, delegate { icon.Visible = false; ExitThread(); });
+            var miExit = new ToolStripMenuItem("Quit tray", null, delegate { ExitThread(); });
 
             menu = new ContextMenuStrip();
             menu.Items.AddRange(new ToolStripItem[] {
@@ -91,7 +106,7 @@ namespace SwapTray
                 miDash, miConfig, miUnload, miStop, miStart, miCoord, miComfyStop,
                 new ToolStripSeparator(), miAuto,
                 new ToolStripSeparator(), miExit });
-            menu.Opening += delegate { ApplyMenuState(); };
+            menu.Opening += delegate { ApplyMenuState(); RefreshState(); };
 
             icon = new NotifyIcon();
             icon.Icon = icoOff;
@@ -104,7 +119,29 @@ namespace SwapTray
             timer.Interval = 5000;
             timer.Tick += delegate { RefreshState(); };
             timer.Start();
+            ApplyMenuState();
             RefreshState();
+        }
+
+        protected override void ExitThreadCore()
+        {
+            Dispose();
+            base.ExitThreadCore();
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && !closing)
+            {
+                closing = true;
+                timer.Stop();
+                timer.Dispose();
+                icon.Visible = false;
+                icon.Dispose();
+                menu.Dispose();
+                dispatcher.Dispose();
+            }
+            base.Dispose(disposing);
         }
 
         void OpenDashboard()
@@ -156,26 +193,50 @@ namespace SwapTray
 
         void RefreshState()
         {
-            comfyCanStop = false;
+            if (closing || Interlocked.CompareExchange(ref refreshPending, 1, 0) != 0) return;
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                try
+                {
+                    var state = ReadState();
+                    if (closing) { Interlocked.Exchange(ref refreshPending, 0); return; }
+                    dispatcher.BeginInvoke((MethodInvoker)delegate
+                    {
+                        try { if (!closing) ApplyState(state); }
+                        finally { Interlocked.Exchange(ref refreshPending, 0); }
+                    });
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine(ex);
+                    Interlocked.Exchange(ref refreshPending, 0);
+                }
+            });
+        }
+
+        TrayState ReadState()
+        {
+            var state = new TrayState();
+            state.comfyCanStop = false;
             if (comfyUrl != null)
             {
                 try
                 {
-                    var state = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(HttpGet(comfyUrl + "/llama_swap/status", 500));
-                    comfyCanStop = state.ContainsKey("stop_supported") && Convert.ToBoolean(state["stop_supported"]);
+                    var reply = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(HttpGet(comfyUrl + "/llama_swap/status", 500));
+                    state.comfyCanStop = reply.ContainsKey("stop_supported") && Convert.ToBoolean(reply["stop_supported"]);
                 }
                 catch { }
             }
-            coordinationAvailable = false;
+            state.coordinationAvailable = false;
             if (coordinationInstalled)
             {
                 try
                 {
-                    var state = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(HttpGet(ApiUrl + "/coordination/status", 1500));
-                    coordinationEnabled = Convert.ToBoolean(state["enabled"]);
-                    coordinationPhase = Convert.ToString(state["phase"]);
-                    if (state["error"] != null) coordinationPhase = Convert.ToString(state["error"]);
-                    coordinationAvailable = true;
+                    var reply = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(HttpGet(ApiUrl + "/coordination/status", 1500));
+                    state.coordinationEnabled = Convert.ToBoolean(reply["enabled"]);
+                    state.coordinationPhase = Convert.ToString(reply["phase"]);
+                    if (reply["error"] != null) state.coordinationPhase = Convert.ToString(reply["error"]);
+                    state.coordinationAvailable = true;
                 }
                 catch { }
             }
@@ -191,20 +252,35 @@ namespace SwapTray
                         var d = o as Dictionary<string, object>;
                         if (d != null && d.ContainsKey("model")) list.Add(Convert.ToString(d["model"]));
                     }
-                up = true;
-                models = list;
+                state.up = true;
+                state.models = list;
             }
             catch
             {
-                up = false;
-                models = new List<string>();
+                state.up = false;
+                state.models = new List<string>();
             }
 
+            if (!closing) state.autostartEnabled = IsAutostartEnabled();
+            return state;
+        }
+
+        void ApplyState(TrayState state)
+        {
+            up = state.up;
+            models = state.models;
+            comfyCanStop = state.comfyCanStop;
+            coordinationAvailable = state.coordinationAvailable;
+            coordinationEnabled = state.coordinationEnabled;
+            coordinationPhase = state.coordinationPhase;
+            autostartEnabled = state.autostartEnabled;
+            statusKnown = true;
             if (!up) { icon.Icon = icoOff; SetText("llama-swap: stopped"); }
             else if (models.Count > 0) { icon.Icon = icoLoaded; SetText("llama-swap: " + string.Join(", ", models.ToArray())); }
             else { icon.Icon = icoIdle; SetText("llama-swap: ready (VRAM free)"); }
             if (coordinationAvailable && coordinationEnabled) SetText("llama-swap: " + coordinationPhase);
             if (coordinationAvailable && coordinationPhase == "ComfyUI running") icon.Icon = icoLoaded;
+            ApplyMenuState();
         }
 
         void SetText(string t)
@@ -229,10 +305,12 @@ namespace SwapTray
                 miUnload.Enabled = false;
                 miStart.Enabled = true;
             }
-            miAuto.Text = IsAutostartEnabled()
+            miAuto.Text = autostartEnabled.GetValueOrDefault()
                 ? "Disable autostart (persistent)"
                 : "Re-enable autostart (currently OFF)";
             miCoord.Text = coordinationInstalled ? "Coordinate with ComfyUI" : "ComfyUI coordination (not installed)";
+            miAuto.Enabled = autostartEnabled.HasValue;
+            if (!autostartEnabled.HasValue) miAuto.Text = "Autostart: checking...";
             miComfyStop.Enabled = comfyCanStop;
             miCoord.Enabled = up && coordinationAvailable;
             miCoord.Checked = coordinationAvailable && coordinationEnabled;
@@ -243,6 +321,11 @@ namespace SwapTray
                 if (models.Count == 0 && up) miStatus.Text = "running: no LLMs loaded";
             }
             if (coordinationAvailable && coordinationEnabled) miStatus.Text = coordinationPhase;
+            if (!statusKnown)
+            {
+                miStatus.Text = "Checking status...";
+                miStop.Enabled = miStart.Enabled = miUnload.Enabled = false;
+            }
             if (configurationError)
             {
                 miStatus.Text = "Invalid coordinator.json; correct it and restart the tray";
@@ -388,6 +471,13 @@ namespace SwapTray
 
         void Balloon(string msg)
         {
+            if (closing) return;
+            if (dispatcher.InvokeRequired)
+            {
+                try { dispatcher.BeginInvoke((MethodInvoker)delegate { Balloon(msg); }); }
+                catch (InvalidOperationException) { }
+                return;
+            }
             icon.ShowBalloonTip(2000, "llama-swap", msg, ToolTipIcon.Info);
         }
 
@@ -424,7 +514,7 @@ namespace SwapTray
             return RunSchtasks(verb + " /TN \"" + ActiveTaskName + "\"");
         }
 
-        static bool IsAutostartEnabled()
+        static bool? IsAutostartEnabled()
         {
             try
             {
@@ -434,17 +524,19 @@ namespace SwapTray
                 psi.RedirectStandardOutput = true;
                 using (var p = Process.Start(psi))
                 {
-                    string xml = p.StandardOutput.ReadToEnd();
-                    p.WaitForExit(5000);
-                    return xml.IndexOf("<Enabled>false</Enabled>", StringComparison.OrdinalIgnoreCase) < 0;
+                    var output = p.StandardOutput.ReadToEndAsync();
+                    if (!p.WaitForExit(2000)) { p.Kill(); return null; }
+                    if (p.ExitCode != 0 || !output.Wait(1000)) return null;
+                    return output.Result.IndexOf("<Enabled>false</Enabled>", StringComparison.OrdinalIgnoreCase) < 0;
                 }
             }
-            catch { return true; }
+            catch { return null; }
         }
 
         void OnToggleAutostart(object s, EventArgs e)
         {
-            bool enabled = IsAutostartEnabled();
+            if (!autostartEnabled.HasValue) { RefreshState(); return; }
+            bool enabled = autostartEnabled.Value;
             string args = "/Change /TN \"" + ActiveTaskName + "\"" + (enabled ? " /DISABLE" : " /ENABLE");
             string msg = enabled
                 ? "Autostart disabled - llama-swap stays off even after a reboot."
@@ -453,6 +545,7 @@ namespace SwapTray
             {
                 if (RunSchtasks(args)) Balloon(msg);
                 else Balloon("Change failed or was cancelled.");
+                RefreshState();
             });
         }
 
@@ -468,11 +561,12 @@ namespace SwapTray
         void OnStop(object s, EventArgs e)
         {
             Balloon("Unloading models and stopping...");
-            // unload synchronously first: it usually takes <5 s and lets llama-swap
-            // stop managed process trees cleanly (via their cmdStop commands)
-            try { HttpGet(ApiUrl + "/unload", 30000); } catch { }
-            RunTask("/End");
-            RefreshState();
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                try { HttpGet(ApiUrl + "/unload", 30000); } catch { }
+                RunTask("/End");
+                RefreshState();
+            });
         }
 
         void OnStart(object s, EventArgs e)
