@@ -94,6 +94,27 @@ API. By default it must be started normally. To add automatic startup, configure
 `comfy_start_command` with an argv array that starts a separately managed task,
 such as `schtasks /Run /TN your-comfy-task`. Do not put it back in a swapping group.
 
+The tray's separate **Stop ComfyUI** action stops the configured ComfyUI instance,
+regardless of whether it was launched independently or through a startup task.
+It also works when coordination is off or the LLM service is stopped. If jobs
+are running or queued, a confirmation shows their counts before cancelling them.
+Confirming saves prompt/workflow data beside the control token as
+`comfyui-queue-before-stop-*.json` before exiting. Execution progress is lost;
+snapshots are not automatically restored. Treat these local files as private
+workflow data. New submissions are rejected once stopping begins.
+
+This action requires the updated extension and a local loopback `comfy_url`.
+Its `/llama_swap/stop` route requires both a local caller and the control token,
+and rejects browser requests with an Origin header. Stopping ComfyUI leaves the
+LLM service running. Restart ComfyUI through its usual launcher when needed.
+For launchers that retain a running state after the server exits (including
+Pinokio), configure `comfy_stop_command` as an executable and argument array.
+The tray runs it only after ComfyUI accepts the stop, never after a declined
+confirmation. For Pinokio, use its Node executable, the installed pterm entry
+script, `stop`, and the app reference returned by `pterm search`. Use an executable
+rather than a `.cmd` wrapper; arguments are quoted without a shell. The default
+empty array leaves launcher integration to the user.
+
 ## Settings and recovery
 
 The tray checkbox persists `enabled` in `coordinator.json`. Status is available
@@ -104,6 +125,8 @@ at `/coordination/status`. Other useful fields are:
 - `minimum_free_vram_mib`: minimum admission floor (2048), **not** a model-size
   estimate. `model_minimum_free_vram_mib` can hold measured per-model requirements.
 - `comfy_start_command`: optional fixed argv for an independent startup task.
+- `comfy_stop_command`: optional launcher cleanup argv, executed by the tray only
+  after the extension accepts a stop. Restart the tray after changing this.
 
 Port/command/token-path changes require a coordinator restart. Ordinary settings
 are read automatically. Logs, secrets and local settings are excluded from Git.

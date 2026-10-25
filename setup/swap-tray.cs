@@ -41,7 +41,11 @@ namespace SwapTray
 
         NotifyIcon icon;
         Icon icoIdle, icoLoaded, icoOff;
-        ToolStripMenuItem miStatus, miUnload, miStop, miStart, miAuto, miCoord;
+        ToolStripMenuItem miStatus, miUnload, miStop, miStart, miAuto, miCoord, miComfyStop;
+        ContextMenuStrip menu;
+        string comfyUrl, comfyTokenPath;
+        bool comfyCanStop;
+        string[] comfyStopCommand = new string[0];
         bool coordinationInstalled, coordinationAvailable, coordinationEnabled, configurationError;
         string coordinationPhase = "";
         System.Windows.Forms.Timer timer;
@@ -63,6 +67,7 @@ namespace SwapTray
                 }
                 catch { configurationError = true; }
             }
+            LoadComfyControl();
             icoIdle   = MakeIcon(Color.FromArgb(46, 160, 67));    // green: running, VRAM free
             icoLoaded = MakeIcon(Color.FromArgb(31, 111, 235));   // blue: models loaded
             icoOff    = MakeIcon(Color.FromArgb(110, 118, 129));  // gray: stopped
@@ -76,12 +81,14 @@ namespace SwapTray
             miStart = new ToolStripMenuItem("Start llama-swap", null, OnStart);
             miAuto = new ToolStripMenuItem("Autostart...", null, OnToggleAutostart);
             miCoord = new ToolStripMenuItem("Coordinate with ComfyUI", null, OnToggleCoordination);
+            miComfyStop = new ToolStripMenuItem("Stop ComfyUI", null, OnStopComfy);
+            miComfyStop.Visible = comfyUrl != null;
             var miExit = new ToolStripMenuItem("Quit tray", null, delegate { icon.Visible = false; ExitThread(); });
 
-            var menu = new ContextMenuStrip();
+            menu = new ContextMenuStrip();
             menu.Items.AddRange(new ToolStripItem[] {
                 miStatus, new ToolStripSeparator(),
-                miDash, miConfig, miUnload, miStop, miStart, miCoord,
+                miDash, miConfig, miUnload, miStop, miStart, miCoord, miComfyStop,
                 new ToolStripSeparator(), miAuto,
                 new ToolStripSeparator(), miExit });
             menu.Opening += delegate { ApplyMenuState(); };
@@ -149,6 +156,16 @@ namespace SwapTray
 
         void RefreshState()
         {
+            comfyCanStop = false;
+            if (comfyUrl != null)
+            {
+                try
+                {
+                    var state = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(HttpGet(comfyUrl + "/llama_swap/status", 500));
+                    comfyCanStop = state.ContainsKey("stop_supported") && Convert.ToBoolean(state["stop_supported"]);
+                }
+                catch { }
+            }
             coordinationAvailable = false;
             if (coordinationInstalled)
             {
@@ -216,6 +233,7 @@ namespace SwapTray
                 ? "Disable autostart (persistent)"
                 : "Re-enable autostart (currently OFF)";
             miCoord.Text = coordinationInstalled ? "Coordinate with ComfyUI" : "ComfyUI coordination (not installed)";
+            miComfyStop.Enabled = comfyCanStop;
             miCoord.Enabled = up && coordinationAvailable;
             miCoord.Checked = coordinationAvailable && coordinationEnabled;
             if (coordinationInstalled)
@@ -228,8 +246,116 @@ namespace SwapTray
             if (configurationError)
             {
                 miStatus.Text = "Invalid coordinator.json; correct it and restart the tray";
-                miStop.Enabled = miStart.Enabled = miUnload.Enabled = miAuto.Enabled = miCoord.Enabled = false;
+                miStop.Enabled = miStart.Enabled = miUnload.Enabled = miAuto.Enabled = miCoord.Enabled = miComfyStop.Enabled = false;
             }
+        }
+
+        void LoadComfyControl()
+        {
+            string root = AppDomain.CurrentDomain.BaseDirectory;
+            if (!File.Exists(Path.Combine(root, "runtime", "coordination-installed.json"))) return;
+            try
+            {
+                var cfg = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(File.ReadAllText(Path.Combine(root, "coordinator.json")));
+                var uri = new Uri(Convert.ToString(cfg["comfy_url"]));
+                IPAddress address;
+                bool local = uri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
+                    || (IPAddress.TryParse(uri.Host, out address) && IPAddress.IsLoopback(address));
+                if (!local || uri.Scheme != "http" || uri.UserInfo.Length != 0) return;
+                if (cfg.ContainsKey("comfy_stop_command"))
+                {
+                    var command = cfg["comfy_stop_command"] as ArrayList;
+                    if (command == null) throw new InvalidDataException("comfy_stop_command must be an argv array");
+                    var args = new List<string>();
+                    foreach (object arg in command) args.Add(Convert.ToString(arg));
+                    comfyStopCommand = args.ToArray();
+                }
+                comfyTokenPath = Path.GetFullPath(Path.Combine(root, Convert.ToString(cfg["control_token_file"])));
+                comfyUrl = uri.AbsoluteUri.TrimEnd('/');
+            }
+            catch { comfyUrl = null; }
+        }
+
+        // Quote argv for CreateProcess; never interpret settings through a shell.
+        static string QuoteArgument(string value)
+        {
+            var quoted = new System.Text.StringBuilder("\"");
+            int slashes = 0;
+            foreach (char c in value)
+            {
+                if (c == '\\') { slashes++; continue; }
+                quoted.Append('\\', c == '"' ? slashes * 2 + 1 : slashes);
+                quoted.Append(c);
+                slashes = 0;
+            }
+            quoted.Append('\\', slashes * 2);
+            return quoted.Append('"').ToString();
+        }
+
+        void StopComfyLauncher()
+        {
+            if (comfyStopCommand.Length == 0) return;
+            var args = new List<string>();
+            for (int i = 1; i < comfyStopCommand.Length; i++) args.Add(QuoteArgument(comfyStopCommand[i]));
+            var start = new ProcessStartInfo(comfyStopCommand[0], string.Join(" ", args.ToArray()));
+            start.UseShellExecute = false;
+            start.CreateNoWindow = true;
+            using (var process = Process.Start(start))
+            {
+                if (!process.WaitForExit(15000) || process.ExitCode != 0)
+                    throw new InvalidOperationException("ComfyUI is stopping, but its launcher stop command failed.");
+            }
+        }
+
+        void OnStopComfy(object sender, EventArgs args)
+        {
+            miComfyStop.Enabled = false;
+            ThreadPool.QueueUserWorkItem(delegate { StopComfy(false); });
+        }
+
+        void StopComfy(bool force)
+        {
+            try
+            {
+                var req = (HttpWebRequest)WebRequest.Create(comfyUrl + "/llama_swap/stop");
+                req.Method = "POST";
+                req.ContentType = "application/json";
+                req.Timeout = req.ReadWriteTimeout = 10000;
+                req.Headers["X-Coordination-Token"] = File.ReadAllText(comfyTokenPath).Trim();
+                byte[] body = System.Text.Encoding.UTF8.GetBytes("{\"force\":" + (force ? "true" : "false") + "}");
+                req.ContentLength = body.Length;
+                using (var stream = req.GetRequestStream()) stream.Write(body, 0, body.Length);
+                HttpWebResponse response;
+                try { response = (HttpWebResponse)req.GetResponse(); }
+                catch (WebException ex)
+                {
+                    response = ex.Response as HttpWebResponse;
+                    if (response == null) throw;
+                }
+                using (response)
+                using (var reader = new StreamReader(response.GetResponseStream()))
+                {
+                    string content = reader.ReadToEnd();
+                    if (response.StatusCode == HttpStatusCode.Conflict && !force)
+                    {
+                        var state = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(content);
+                        string warning = "ComfyUI: " + state["running"] + " running, " + state["pending"] + " queued.\n\nStop now and cancel these jobs? A local prompt/workflow snapshot will be saved; progress cannot be resumed automatically.";
+                        menu.BeginInvoke((MethodInvoker)delegate
+                        {
+                            if (MessageBox.Show(warning, "Stop ComfyUI", MessageBoxButtons.YesNo,
+                                MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) == DialogResult.Yes)
+                                ThreadPool.QueueUserWorkItem(delegate { StopComfy(true); });
+                        });
+                        return;
+                    }
+                    if (response.StatusCode != HttpStatusCode.OK) throw new InvalidOperationException(content);
+                    var result = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(content);
+                    string backup = result.ContainsKey("backup") ? Convert.ToString(result["backup"]) : "";
+                    StopComfyLauncher();
+                    Balloon("ComfyUI is stopping." + (backup.Length > 0 ? " Queue snapshot: " + backup : ""));
+                }
+            }
+            catch (Exception ex) { Balloon("Stop ComfyUI: " + ex.Message); }
         }
 
         void OnToggleCoordination(object s, EventArgs e)

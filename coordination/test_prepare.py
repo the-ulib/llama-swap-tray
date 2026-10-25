@@ -95,11 +95,13 @@ class PrepareTests(unittest.TestCase):
     def test_reinstallation_preserves_custom_policy_and_model_selection(self):
         cfg, _ = prepare(self.root, self.comfy, llm_models=["image-service"])
         cfg.update(enabled=True, max_wait_seconds=4321, minimum_free_vram_mib=4096)
+        cfg["comfy_stop_command"] = ["launcher.exe", "stop", "my-comfy"]
         (self.root / "coordinator.json").write_text(json.dumps(cfg))
         updated, _ = prepare(self.root, self.comfy)
         self.assertEqual(updated["llm_models"], ["image-service", "images"])
         self.assertEqual(updated["max_wait_seconds"], 4321)
         self.assertEqual(updated["minimum_free_vram_mib"], 4096)
+        self.assertEqual(updated["comfy_stop_command"], cfg["comfy_stop_command"])
         self.assertFalse(updated["enabled"])
 
 

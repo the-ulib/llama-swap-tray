@@ -57,7 +57,7 @@ def prepare(root, comfy_root, public_port=9292, backend_port=9293, comfy_port=81
                          ". Use -AllowPersistentUnload to explicitly permit whole-GPU handovers")
     cfg = json.loads((root / "coordination.example.json").read_text())
     for key in ("listen_host", "max_wait_seconds", "worker_timeout_seconds", "max_comfy_allocated_mib",
-                "minimum_free_vram_mib", "model_minimum_free_vram_mib", "comfy_start_command"):
+                "minimum_free_vram_mib", "model_minimum_free_vram_mib", "comfy_start_command", "comfy_stop_command"):
         if key in previous:
             cfg[key] = previous[key]
     cfg.update(listen_port=public_port, backend_url=f"http://127.0.0.1:{backend_port}",

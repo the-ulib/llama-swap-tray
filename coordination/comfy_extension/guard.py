@@ -20,6 +20,7 @@ class WorkerGuard:
         self.state = "starting"
         self.error = None
         self.stop = threading.Event()
+        self.shutting_down = False
 
     def config(self):
         with open(self.config_path, encoding="utf-8-sig") as handle:
@@ -53,6 +54,9 @@ class WorkerGuard:
         started = time.monotonic()
         while not self.stop.is_set():
             with queue.mutex:
+                if self.shutting_down:
+                    self.state = "stopping"
+                    return None
                 pending = len(queue.queue)
             try:
                 reply = self.poll(pending)
@@ -70,7 +74,10 @@ class WorkerGuard:
                 if action in ("run", "disabled") and pending:
                     # get(0) never waits under a granted permit. A queue edit may
                     # have removed the last item since the count was read.
-                    item = original_get(timeout=0)
+                    with queue.mutex:
+                        if self.shutting_down:
+                            return None
+                        item = original_get(timeout=0)
                     self.grant = reply.get("grant") if item is not None else None
                     if item is None and reply.get("grant"):
                         self.completed = reply["grant"]
@@ -87,7 +94,13 @@ class WorkerGuard:
                 except (OSError, ValueError, KeyError):
                     disabled = False
                 if disabled:
-                    return original_get(timeout=min(timeout or 0.5, 0.5))
+                    with queue.mutex:
+                        if self.shutting_down:
+                            return None
+                        item = original_get(timeout=0)
+                    if item is None:
+                        self.stop.wait(min(timeout or 0.5, 0.5))
+                    return item
             if timeout is not None and time.monotonic() - started >= timeout:
                 return None
             self.stop.wait(0.25)

@@ -8,7 +8,7 @@ if (-not (Test-Path -LiteralPath $Python)) { throw 'Use -Python with an interpre
 Push-Location $Root
 try {
     # Explicit modules avoid importing the ComfyUI-only custom-node package.
-    & $Python -m unittest coordination.test_coordination coordination.test_prepare -v
+    & $Python -m unittest coordination.test_coordination coordination.test_prepare coordination.test_comfy_control coordination.test_tray_control -v
     if ($LASTEXITCODE -ne 0) { throw 'Coordination tests failed' }
     if ($LlamaSwapExe) {
         & $Python -m coordination.smoke_service --llama-swap-exe $LlamaSwapExe

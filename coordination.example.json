@@ -7,6 +7,7 @@
   "comfy_url": "http://127.0.0.1:8188",
   "comfy_process_path": "REPLACE-ME",
   "comfy_start_command": [],
+  "comfy_stop_command": [],
   "server_task_name": "llama-swap\\server",
   "max_wait_seconds": 1800,
   "worker_timeout_seconds": 15,

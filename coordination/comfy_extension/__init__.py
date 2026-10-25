@@ -13,6 +13,7 @@ import comfy.model_management
 from server import PromptServer
 
 from .guard import WorkerGuard
+from .control import install_control
 
 NODE_CLASS_MAPPINGS = {}
 settings_path = Path(__file__).with_name("settings.json")
@@ -61,10 +62,12 @@ def guarded_get(self, timeout=None):
 
 
 queue.get = types.MethodType(guarded_get, queue)
+install_control(PromptServer.instance.routes, guard, queue)
 
 
 @PromptServer.instance.routes.get("/llama_swap/status")
 async def status(request):
     return web.json_response({"protocol": 1, "session": guard.session,
                               "state": guard.state, "error": guard.error,
+                              "stop_supported": True,
                               "memory_backend": "cuda" if torch.cuda.is_available() else "unsupported"})
