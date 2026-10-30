@@ -32,8 +32,8 @@ namespace SwapTray
 
     class TrayContext : ApplicationContext
     {
-        // must match the port configured in setup\03-server-task.ps1
-        const string Api = "http://localhost:9292";
+        // Match setup\03-server-task.ps1; use IPv4 to avoid localhost IPv6 timeouts.
+        const string Api = "http://127.0.0.1:9292";
         const string TaskName = "llama-swap\\server";
         static string apiOverride, taskOverride;
         static string ApiUrl { get { return apiOverride ?? Api; } }
@@ -74,7 +74,7 @@ namespace SwapTray
                 try
                 {
                     var cfg = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(File.ReadAllText(settings));
-                    apiOverride = "http://localhost:" + Convert.ToInt32(cfg["listen_port"]);
+                    apiOverride = "http://127.0.0.1:" + Convert.ToInt32(cfg["listen_port"]);
                     taskOverride = Convert.ToString(cfg["server_task_name"]);
                     coordinationInstalled = true;
                 }
