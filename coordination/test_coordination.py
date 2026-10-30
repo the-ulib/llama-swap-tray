@@ -157,6 +157,19 @@ class CoordinationTests(unittest.IsolatedAsyncioTestCase):
         self.events.append("comfy-2")
         self.assertEqual(self.events, ["unload-llm", "comfy-1", "unload-comfy", "llm", "unload-llm", "comfy-2"])
 
+    async def test_restart_waits_for_a_workflow_without_a_previous_permit(self):
+        # ComfyUI can already be executing with the backend stopped. A new
+        # coordinator must wait for its next worker boundary before loading.
+        task = asyncio.create_task(self.c.enter("after-restart", "test"))
+        self.tasks.append(task)
+        await self.eventually(lambda: bool(self.c.waiters))
+        self.assertFalse(task.done())
+        self.assertEqual(self.events, [])
+        self.assertFalse(self.c.inflight)
+        await self.release_comfy()
+        self.assertTrue(await task)
+        await self.c.leave("after-restart", True)
+
     async def test_fairness_between_two_llm_requests(self):
         await self.poll()
         a = asyncio.create_task(self.c.enter("a", "test"))

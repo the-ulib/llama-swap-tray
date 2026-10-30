@@ -134,9 +134,14 @@ are read automatically. Logs, secrets and local settings are excluded from Git.
 Missing/unresponsive extensions and failed memory release produce an error rather
 than loading over ComfyUI. A disconnected active LLM call is drained before GPU
 release. If the coordinator stops, the Windows Job Object terminates its backend
-and child model processes; independent ComfyUI finishes its current workflow and
-holds before the next. Restart the server task to recover. The tray's stop action
-therefore stops the LLM service and does not kill ComfyUI.
+and child model processes. Independent ComfyUI continues queued workflows once
+its worker verifies that the local backend port refuses connections and neither
+the configured backend nor a llama-swap/llama-server process remains. Timeouts,
+surviving model processes and inaccessible process information keep the queue
+held. The enabled setting stays unchanged: restarting the server task resumes
+coordination at the next workflow boundary, before any new LLM can load. The
+tray's stop action stops the LLM service and does not kill or pause ComfyUI once
+backend shutdown is verified.
 
 For a verified retry after an unload error, make a local POST to
 `/coordination/recover`. It refuses while a live request/workflow owns the GPU,

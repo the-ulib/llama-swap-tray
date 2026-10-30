@@ -1,11 +1,48 @@
 """Worker-boundary guard. No GPU operations are performed on the HTTP thread."""
+import ipaddress
 import json
 import logging
+import ntpath
+import socket
 import threading
 import time
 import urllib.error
 import urllib.request
 import uuid
+from urllib.parse import urlsplit
+
+import psutil
+
+
+def backend_stopped(cfg):
+    """Require both a refused local connection and no backend/model processes."""
+    try:
+        backend = urlsplit(cfg["backend_url"])
+        if backend.scheme != "http" or not ipaddress.ip_address(backend.hostname).is_loopback:
+            return False
+        command = cfg["backend_command"]
+        if not isinstance(command, list) or not command or not isinstance(command[0], str) or not command[0]:
+            return False
+        names = {"llama-swap", "llama-swap.exe", "llama-server", "llama-server.exe",
+                 ntpath.basename(command[0]).lower()}
+        # Windows can take about two seconds to report connection refusal.
+        with socket.create_connection((backend.hostname, backend.port or 80), timeout=2.5):
+            return False
+    except ConnectionRefusedError:
+        pass
+    except (OSError, ValueError, TypeError, KeyError):
+        return False
+    try:
+        for process in psutil.process_iter(["name"]):
+            try:
+                name = process.info["name"]
+                if not name or name.lower() in names:
+                    return False
+            except psutil.NoSuchProcess:
+                continue
+    except (psutil.Error, OSError):
+        return False
+    return True
 
 
 class WorkerGuard:
@@ -87,17 +124,24 @@ class WorkerGuard:
             except (OSError, ValueError, urllib.error.URLError) as exc:
                 self.error = str(exc)
                 self.state = "coordinator unavailable"
-                # Disabled is an explicit user choice, not an inference from an
-                # unreachable coordinator. Enabled always waits on connection loss.
+                # A missing coordinator alone says nothing about GPU ownership.
+                # Resume only after confirming the backend and model processes
+                # are gone. On restart, polling resumes at the next job boundary.
                 try:
-                    disabled = not self.config()["enabled"]
+                    cfg = self.config()
+                    disabled = not cfg["enabled"]
+                    stopped = not disabled and backend_stopped(cfg)
                 except (OSError, ValueError, KeyError):
-                    disabled = False
-                if disabled:
+                    disabled = stopped = False
+                if disabled or stopped:
+                    self.error = None
+                    self.state = "disabled" if disabled else "llama-swap stopped"
                     with queue.mutex:
                         if self.shutting_down:
                             return None
                         item = original_get(timeout=0)
+                    if item is not None:
+                        self.state = "running" if disabled else "running (llama-swap stopped)"
                     if item is None:
                         self.stop.wait(min(timeout or 0.5, 0.5))
                     return item
